@@ -17,7 +17,7 @@ Dr. Amir Reza Zirakpourazar
 
 ## Canlı Site
 
-🔗 [https://amirrezazirakpourazar.github.io/erframeecg](https://amirrezazirakpourazar.github.io/erframeecg)
+🔗 [https://zirakpourazar-png.github.io/erframeecg](https://amirrezazirakpourazar.github.io/erframeecg)
 
 ## Kurulum
 
