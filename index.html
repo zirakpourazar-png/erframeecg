@@ -1,0 +1,1387 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ERFrame ECG — Dr. Amir Reza Zirakpourazar</title>
+<meta name="description" content="ERFrame ECG — Acil EKG Pratiği — 35 Pattern, 280+ Hasta, İnteraktif Quiz">
+<meta name="author" content="Dr. Amir Reza Zirakpourazar">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♡</text></svg>">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', 'Helvetica Neue', system-ui, sans-serif; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+
+
+/* ═══════════════════════════════════════════════════════════════
+   ECG WAVE MATH — 37 pattern generators
+   ═══════════════════════════════════════════════════════════════ */
+const G = (t, c, w, a) => a * Math.exp(-((t - c) ** 2) / (2 * w * w));
+
+const gen = {
+  nsr: (t, p) => {
+    const a = p.amp || 1;
+    return G(t,.09,.012,.15*a) - G(t,.175,.005,.09*a) + G(t,.205,.007,1*a) - G(t,.235,.007,.23*a) + G(t,.385,.031,.26*a);
+  },
+  stemi_ant: (t, p) => {
+    const a = p.amp||1, st = p.st||.42;
+    let y = G(t,.09,.012,.1*a) - G(t,.175,.007,.22*a) + G(t,.205,.008,.8*a) - G(t,.235,.007,.05*a);
+    if(t>.24&&t<.52) y += st*a*Math.pow(Math.sin(((t-.24)/.28)*Math.PI*.65),.38);
+    y += G(t,.44,.047,.58*a);
+    return y;
+  },
+  stemi_inf: (t, p) => {
+    const a = p.amp||1;
+    let y = G(t,.09,.012,.14*a) - G(t,.175,.006,.15*a) + G(t,.205,.008,.75*a) - G(t,.235,.007,.08*a);
+    if(t>.24&&t<.48) y += .35*a*Math.pow(Math.sin(((t-.24)/.24)*Math.PI*.6),.4);
+    y += G(t,.42,.042,.50*a);
+    return y;
+  },
+  stemi_lat: (t, p) => {
+    const a = p.amp||1;
+    let y = G(t,.09,.012,.13*a) - G(t,.175,.006,.12*a) + G(t,.205,.007,.85*a) - G(t,.235,.007,.1*a);
+    if(t>.24&&t<.50) y += .30*a*Math.pow(Math.sin(((t-.24)/.26)*Math.PI*.6),.4);
+    y += G(t,.42,.040,.45*a);
+    return y;
+  },
+  stemi_post: (t, p) => {
+    const a = p.amp||1;
+    let y = G(t,.09,.012,.14*a) - G(t,.175,.005,.06*a) + G(t,.205,.007,.95*a) - G(t,.235,.007,.12*a);
+    if(t>.24&&t<.45) y -= .25*a*Math.pow(Math.sin(((t-.24)/.21)*Math.PI*.7),.5);
+    y += G(t,.42,.028,.35*a);
+    return y;
+  },
+  nstemi: (t, p) => {
+    const a = p.amp||1;
+    let y = G(t,.09,.012,.14*a) - G(t,.175,.005,.07*a) + G(t,.205,.007,.9*a) - G(t,.235,.007,.2*a);
+    if(t>.24&&t<.4) y -= .2*a*Math.pow(Math.sin(((t-.24)/.16)*Math.PI*.7),.5);
+    y -= G(t,.42,.030,.22*a);
+    return y;
+  },
+  wellens: (t, p) => {
+    const a = p.amp||1;
+    return G(t,.09,.012,.14*a) - G(t,.175,.005,.07*a) + G(t,.205,.007,.95*a) - G(t,.235,.007,.2*a) - G(t,.40,.032,.45*a);
+  },
+  dewinter: (t, p) => {
+    const a = p.amp||1;
+    let y = G(t,.09,.012,.12*a) - G(t,.175,.005,.08*a) + G(t,.205,.007,.85*a) - G(t,.235,.007,.22*a);
+    if(t>.24&&t<.38) y -= .18*a*(1-(t-.24)/.14);
+    y += G(t,.42,.030,.55*a);
+    return y;
+  },
+  afib: (t, p, gT) => {
+    const a = p.amp||1;
+    let y = 0;
+    for(const f of [5.1,7.3,9.8,13.2]) y += .04*Math.sin(2*Math.PI*f*gT+f*1.3);
+    y += -G(t,.10,.006,.08*a) + G(t,.13,.008,1*a) - G(t,.16,.007,.22*a) + G(t,.30,.029,.23*a);
+    return y;
+  },
+  aflutter: (t, p, gT) => {
+    const a = p.amp||1;
+    let y = .18*a*Math.sin(2*Math.PI*5*gT); // sawtooth-like flutter waves
+    y += -G(t,.10,.006,.07*a) + G(t,.13,.008,1*a) - G(t,.16,.007,.20*a) + G(t,.30,.028,.22*a);
+    return y;
+  },
+  svt: (t, p) => {
+    const a = p.amp||1;
+    return -G(t,.06,.005,.04*a) + G(t,.09,.007,1*a) - G(t,.12,.006,.18*a) + G(t,.24,.025,.2*a) - G(t,.14,.008,.08*a);
+  },
+  wpw: (t, p) => {
+    const a = p.amp||1;
+    let y = G(t,.08,.012,.14*a);
+    // delta wave (slurred upstroke)
+    if(t>.13&&t<.19) y += .4*a*((t-.13)/.06);
+    y += G(t,.20,.010,.7*a) - G(t,.26,.010,.15*a) + G(t,.40,.032,.25*a);
+    return y;
+  },
+  mat: (t, p) => {
+    const a = p.amp||1;
+    const pAmp = .08 + .12*Math.sin(p.seed||0 + t*3);
+    return G(t,.09,.012,pAmp*a) - G(t,.175,.005,.07*a) + G(t,.205,.007,.9*a) - G(t,.235,.007,.20*a) + G(t,.385,.031,.24*a);
+  },
+  vt: (t, p) => {
+    const a = p.amp||1;
+    return G(t,.05,.022,.85*a) - G(t,.13,.018,.55*a) + G(t,.21,.020,.28*a) - G(t,.27,.025,.38*a);
+  },
+  pvt: (t, p) => {
+    const a = p.amp||1, phase = p.phase||0;
+    const mod = .5+.5*Math.sin(phase+t*8);
+    return (G(t,.05,.022,.85*a) - G(t,.13,.018,.55*a) + G(t,.21,.020,.28*a))*mod - G(t,.27,.025,.38*a)*(1-mod);
+  },
+  torsades: (t, p, gT) => {
+    const a = (p.amp||1) * (.3+.7*Math.abs(Math.sin(2*Math.PI*.6*gT)));
+    return G(t,.05,.020,.8*a) - G(t,.12,.018,.5*a) + G(t,.20,.020,.3*a) - G(t,.26,.022,.35*a);
+  },
+  vf: (t, p, gT) => {
+    let y = 0;
+    const seeds = [3.2,4.8,6.1,7.5,8.9,5.3,9.2,3.8,6.7,4.1,7.2,8.3,5.7,9.5];
+    for(let i=0;i<seeds.length;i++) y += (.15+(i%5)*.1)*Math.sin(2*Math.PI*seeds[i]*gT+i*1.1);
+    return y*(.55+.45*Math.sin(2*Math.PI*.85*gT+.5))*(p.amp||.8);
+  },
+  aivr: (t, p) => {
+    const a = p.amp||1;
+    return G(t,.05,.018,.6*a) - G(t,.12,.015,.35*a) + G(t,.20,.020,.15*a) - G(t,.35,.035,.20*a);
+  },
+  avb1: (t, p) => {
+    const a = p.amp||1;
+    return G(t,.07,.012,.16*a) - G(t,.24,.005,.08*a) + G(t,.27,.007,1*a) - G(t,.30,.007,.22*a) + G(t,.44,.031,.25*a);
+  },
+  avb2_1: (t, p) => gen.nsr(t, p), // Wenckebach uses variable PR in rhythm logic
+  avb2_2: (t, p) => gen.nsr(t, p), // Mobitz II uses dropped beats in rhythm logic
+  avb3: (t, p) => {
+    const a = p.amp||1;
+    return -G(t,.05,.007,.09*a) + G(t,.09,.020,.9*a) - G(t,.17,.015,.42*a) + G(t,.30,.030,.12*a) - G(t,.55,.044,.27*a);
+  },
+  rbbb: (t, p) => {
+    const a = p.amp||1;
+    return G(t,.09,.012,.15*a) - G(t,.175,.005,.06*a) + G(t,.20,.006,.7*a) - G(t,.23,.005,.3*a) + G(t,.26,.008,.45*a) - G(t,.30,.008,.15*a) + G(t,.42,.030,.20*a);
+  },
+  lbbb: (t, p) => {
+    const a = p.amp||1;
+    return G(t,.09,.012,.14*a) - G(t,.175,.005,.04*a) + G(t,.21,.020,.85*a) - G(t,.28,.012,.10*a) - G(t,.48,.040,.25*a);
+  },
+  hyperK: (t, p) => {
+    const a = p.amp||1;
+    return G(t,.09,.015,.04*a) - G(t,.19,.008,.06*a) + G(t,.23,.015,.75*a) - G(t,.28,.012,.35*a) + G(t,.40,.020,.70*a);
+  },
+  hypoK: (t, p) => {
+    const a = p.amp||1;
+    let y = G(t,.09,.012,.15*a) - G(t,.175,.005,.08*a) + G(t,.205,.007,1*a) - G(t,.235,.007,.22*a);
+    if(t>.24&&t<.38) y -= .12*a*Math.pow(Math.sin(((t-.24)/.14)*Math.PI*.7),.5);
+    y += G(t,.38,.025,.08*a) + G(t,.50,.020,.18*a); // U wave
+    return y;
+  },
+  hypoCa: (t, p) => {
+    const a = p.amp||1;
+    return G(t,.09,.012,.15*a) - G(t,.175,.005,.09*a) + G(t,.205,.007,1*a) - G(t,.235,.007,.23*a) + G(t,.50,.031,.26*a); // prolonged QT via late T
+  },
+  tca: (t, p) => {
+    const a = p.amp||1;
+    return G(t,.05,.010,.05*a) - G(t,.11,.010,.10*a) + G(t,.16,.018,.85*a) - G(t,.23,.015,.50*a) + G(t,.29,.012,.15*a) - G(t,.38,.030,.20*a);
+  },
+  digoxin: (t, p) => {
+    const a = p.amp||1;
+    let y = G(t,.09,.012,.15*a) - G(t,.175,.005,.08*a) + G(t,.205,.007,.85*a) - G(t,.235,.007,.20*a);
+    // reverse tick / scooped ST
+    if(t>.24&&t<.45) y -= .18*a*Math.sin(((t-.24)/.21)*Math.PI);
+    y += G(t,.48,.025,.10*a);
+    return y;
+  },
+  brugada: (t, p) => {
+    const a = p.amp||1;
+    let y = G(t,.09,.012,.12*a) - G(t,.175,.005,.06*a) + G(t,.205,.007,.80*a) - G(t,.235,.007,.15*a);
+    // Coved ST elevation
+    if(t>.24&&t<.40) y += .35*a*Math.exp(-((t-.28)**2)/(2*.025**2));
+    y -= G(t,.42,.028,.20*a); // negative T
+    return y;
+  },
+  longQT: (t, p) => {
+    const a = p.amp||1;
+    return G(t,.09,.012,.15*a) - G(t,.175,.005,.09*a) + G(t,.205,.007,1*a) - G(t,.235,.007,.23*a) + G(t,.55,.040,.28*a); // very late T
+  },
+  pericarditis: (t, p) => {
+    const a = p.amp||1;
+    let y = G(t,.09,.012,.15*a);
+    // PR depression
+    if(t>.11&&t<.17) y -= .06*a;
+    y += -G(t,.175,.005,.08*a) + G(t,.205,.007,.90*a) - G(t,.235,.007,.20*a);
+    // diffuse concave ST elevation
+    if(t>.24&&t<.48) y += .15*a*Math.sin(((t-.24)/.24)*Math.PI*.5);
+    y += G(t,.42,.035,.30*a);
+    return y;
+  },
+  hypothermia: (t, p) => {
+    const a = p.amp||1;
+    let y = G(t,.09,.012,.12*a) - G(t,.175,.005,.07*a) + G(t,.205,.007,.80*a);
+    // Osborn J wave
+    y += G(t,.24,.010,.35*a);
+    y -= G(t,.28,.007,.15*a) + G(t,.45,.035,.18*a);
+    return y;
+  },
+  paced: (t, p) => {
+    const a = p.amp||1;
+    let y = 0;
+    // Spike
+    if(t>.119&&t<.125) y = .6*a;
+    else if(t>.125&&t<.13) y = -.15*a;
+    // Wide LBBB-like QRS
+    y += G(t,.17,.020,.70*a) - G(t,.24,.015,.35*a) + G(t,.30,.012,.10*a) - G(t,.48,.040,.30*a);
+    return y;
+  },
+  pe: (t, p) => {
+    const a = p.amp||1;
+    return G(t,.06,.010,.14*a) - G(t,.14,.005,.06*a) + G(t,.17,.007,.80*a) - G(t,.20,.008,.35*a) + G(t,.32,.028,.15*a);
+  },
+};
+
+/* ═══════════════════════════════════════════════════════════════
+   PATTERN DATABASE — 37 patterns, 7-8 patient variations each
+   ═══════════════════════════════════════════════════════════════ */
+const CATEGORIES = [
+  { id: "basic", name: "Temel & Sinüsal", color: "#1B5E7B", icon: "♡" },
+  { id: "ischemia", name: "İskemi / İnfarkt", color: "#B5272B", icon: "⚡" },
+  { id: "atrial", name: "Atriyal Aritmiler", color: "#2A6B8A", icon: "〰" },
+  { id: "ventricular", name: "Ventriküler Aritmiler", color: "#C44A00", icon: "⚠" },
+  { id: "block", name: "Bloklar & İletim", color: "#5C2D8A", icon: "◫" },
+  { id: "metabolic", name: "Elektrolit & Toksisite", color: "#1A6B3C", icon: "⬡" },
+  { id: "other", name: "Diğer Acil", color: "#7A4A00", icon: "✦" },
+];
+
+const patterns = [
+  // ── BASIC ──
+  { id:"nsr", gen:"nsr", cat:"basic", name:"Normal Sinüs Ritmi", lead:"dII", difficulty:1,
+    scenario:"45 yaşında kadın, rutin kontrol. TA 120/80, nabız 72.",
+    desc:"Düzenli, her P'den sonra QRS, PR 120-200ms, HR 60-100.",
+    criteria:["HR 60-100","Düzenli R-R","Her P→QRS","PR 120-200ms","QRS <120ms"],
+    treatment:"Tedavi gerekmez. Normal bulgu.",
+    patients:[{hr:68,amp:1},{hr:72,amp:.95},{hr:78,amp:1.05},{hr:65,amp:.9},{hr:80,amp:1.1},{hr:70,amp:1,noise:.012},{hr:75,amp:.88},{hr:82,amp:1.02}]},
+  { id:"sbrad", gen:"nsr", cat:"basic", name:"Sinüs Bradikardisi", lead:"dII", difficulty:1,
+    scenario:"28 yaşında erkek, maraton koşucusu, baş dönmesi yok, TA normal.",
+    desc:"Sinüsal ritim, HR <60/dk. Sporcularda normal olabilir.",
+    criteria:["HR <60/dk","Sinüsal P dalgası","Düzenli R-R"],
+    treatment:"Asemptomatik → izlem. Semptomatik → Atropin 0.5mg IV.",
+    patients:[{hr:45,amp:1},{hr:52,amp:.95},{hr:48,amp:1.05},{hr:55,amp:.9},{hr:42,amp:1.1},{hr:50,amp:1},{hr:58,amp:.92},{hr:40,amp:1.08}]},
+  { id:"stachy", gen:"nsr", cat:"basic", name:"Sinüs Taşikardisi", lead:"dII", difficulty:1,
+    scenario:"35 yaşında kadın, ateş 39.2°C, nefes darlığı, TA 100/65.",
+    desc:"Sinüsal ritim, HR >100/dk. NEDENİ ara.",
+    criteria:["HR >100/dk","Sinüsal P","Düzenli","P görülebilir"],
+    treatment:"Taşikardiyi tedavi etme, NEDENİ bul: ağrı, ateş, anemi, PE, sepsis.",
+    patients:[{hr:110,amp:.9},{hr:120,amp:.85},{hr:105,amp:.95},{hr:130,amp:.8},{hr:115,amp:.88},{hr:108,amp:.92},{hr:125,amp:.82},{hr:118,amp:.90}]},
+  // ── ISCHEMIA ──
+  { id:"stemi_ant", gen:"stemi_ant", cat:"ischemia", name:"Anterior STEMI", lead:"V2-V4", difficulty:3,
+    scenario:"62 yaşında erkek, 45dk göğüs ağrısı, soğuk terleme, TA 95/60.",
+    desc:"LAD oklüzyonu. Tombstone morfoloji. KAT LAB.",
+    criteria:["V2-V4 ST ↑ ≥2mm","Tombstone","Patolojik Q","Hiperakut T"],
+    treatment:"ASA 300mg + Tikagrelor 180mg + Heparin IV. Kapı-balon <90dk.",
+    patients:[{hr:94,amp:1,st:.42},{hr:88,amp:.95,st:.38},{hr:100,amp:1.05,st:.50},{hr:92,amp:.9,st:.35},{hr:96,amp:1.1,st:.45},{hr:85,amp:.88,st:.40},{hr:105,amp:1,st:.55},{hr:90,amp:.92,st:.36}]},
+  { id:"stemi_inf", gen:"stemi_inf", cat:"ischemia", name:"İnferior STEMI", lead:"dII,dIII,aVF", difficulty:3,
+    scenario:"55 yaşında erkek, epigastrik ağrı, bulantı, terleme, TA 88/55.",
+    desc:"RCA oklüzyonu. V3R-V4R çek. Sağ ventrikül MI?",
+    criteria:["II,III,aVF ST ↑","Reciprocal I,aVL ST ↓","Q dalgası"],
+    treatment:"Aynı STEMI protokolü. Sağ vent MI varsa sıvı ver, nitrat VERME.",
+    patients:[{hr:85,amp:1},{hr:78,amp:.95},{hr:92,amp:1.05},{hr:80,amp:.9},{hr:88,amp:1.1},{hr:75,amp:.88},{hr:95,amp:1},{hr:82,amp:.92}]},
+  { id:"stemi_lat", gen:"stemi_lat", cat:"ischemia", name:"Lateral STEMI", lead:"I,aVL,V5-V6", difficulty:3,
+    scenario:"70 yaşında kadın, sol omuz ağrısı, nefes darlığı, HT öyküsü.",
+    desc:"LCx veya diagonal oklüzyon.",
+    criteria:["I,aVL ST ↑","V5-V6 ST ↑","Reciprocal inferior ST ↓"],
+    treatment:"STEMI protokolü. Kat lab.",
+    patients:[{hr:82,amp:1},{hr:90,amp:.95},{hr:78,amp:1.05},{hr:85,amp:.9},{hr:88,amp:1.1},{hr:80,amp:.88},{hr:92,amp:1},{hr:76,amp:.95}]},
+  { id:"stemi_post", gen:"stemi_post", cat:"ischemia", name:"Posterior STEMI", lead:"V1-V3 mirror", difficulty:3,
+    scenario:"60 yaşında erkek, göğüs ağrısı, V1-V3'te ST depresyonu. STEMI gibi görünmüyor ama...",
+    desc:"V1-V3'te tall R + ST depresyon = mirror image. V7-V9 çek.",
+    criteria:["V1-V3 tall R","V1-V3 ST ↓","V7-V9 ST ↑ (çekilirse)"],
+    treatment:"STEMI eşdeğeri → Kat lab.",
+    patients:[{hr:80,amp:1},{hr:85,amp:.95},{hr:78,amp:1.05},{hr:88,amp:.9},{hr:82,amp:1.1},{hr:75,amp:.88},{hr:90,amp:1},{hr:84,amp:.95}]},
+  { id:"nstemi", gen:"nstemi", cat:"ischemia", name:"NSTEMI", lead:"V4-V5", difficulty:2,
+    scenario:"58 yaşında DM kadın, epigastrik ağrı + bulantı. Troponin 1.2 ng/mL.",
+    desc:"ST depresyon + T inversiyonu, troponin pozitif.",
+    criteria:["ST depresyon ≥0.5mm","T inversiyonu","Troponin (+)","ST elevasyonu YOK"],
+    treatment:"ASA + P2Y12 + Antikoagülan. Erken invaziv <24s.",
+    patients:[{hr:82,amp:1},{hr:90,amp:.95},{hr:78,amp:1.05},{hr:85,amp:.9},{hr:88,amp:1.1},{hr:80,amp:.88},{hr:95,amp:1},{hr:84,amp:.92}]},
+  { id:"wellens", gen:"wellens", cat:"ischemia", name:"Wellens Sendromu", lead:"V2-V3", difficulty:3,
+    scenario:"50 yaşında, göğüs ağrısı geçmiş, şimdi ağrısız. V2-V3'te derin T.",
+    desc:"Derin simetrik T inv. Proksimal LAD. Stres testi KONTRENDİKE.",
+    criteria:["V2-V3 derin simetrik T inv","Ağrısız dönemde","Minimal troponin"],
+    treatment:"Stres testi yapma! Koroner anjiyo. STEMI eşdeğeri.",
+    patients:[{hr:72,amp:1},{hr:68,amp:.95},{hr:78,amp:1.05},{hr:70,amp:.9},{hr:75,amp:1.1},{hr:65,amp:.88},{hr:80,amp:1},{hr:74,amp:.95}]},
+  { id:"dewinter", gen:"dewinter", cat:"ischemia", name:"De Winter T", lead:"V1-V6", difficulty:3,
+    scenario:"48 yaşında erkek, devam eden göğüs ağrısı. ST elevasyonu yok ama V1-V6'da garip T.",
+    desc:"Upsloping ST dep + tall T. ST elevasyonu YOK ama LAD oklüzyon.",
+    criteria:["J-point ST dep 1-3mm","Upsloping","Tall simetrik T","aVR ST ↑"],
+    treatment:"STEMI eşdeğeri → Kat lab.",
+    patients:[{hr:82,amp:1},{hr:78,amp:.95},{hr:88,amp:1.05},{hr:80,amp:.9},{hr:85,amp:1.1},{hr:75,amp:.88},{hr:90,amp:1},{hr:84,amp:.95}]},
+  // ── ATRIAL ──
+  { id:"afib", gen:"afib", cat:"atrial", name:"Atriyal Fibrilasyon", lead:"dII", difficulty:2,
+    scenario:"78 yaşında erkek, düzensiz nabız, nefes darlığı. DM + HT + geçirilmiş TIA.",
+    desc:"P yok, f dalgaları, düzensiz-düzensiz. CHADS₂-VASc hesapla.",
+    criteria:["P dalgası YOK","Düzensiz R-R","f dalgaları","QRS genellikle dar"],
+    treatment:"Rate control: Metoprolol/Diltiazem. CHADS₂-VASc ≥2 → antikoagülan.",
+    irregular:true,rrIntervals:[.36,.55,.40,.72,.33,.59,.44,.62,.38,.50,.35,.68],
+    patients:[{hr:110,amp:1},{hr:130,amp:.9},{hr:95,amp:1.05},{hr:140,amp:.85},{hr:105,amp:1.1},{hr:120,amp:.88},{hr:100,amp:1},{hr:135,amp:.82}]},
+  { id:"aflutter", gen:"aflutter", cat:"atrial", name:"Atriyal Flutter", lead:"dII", difficulty:2,
+    scenario:"65 yaşında kadın, çarpıntı, HR tam 150/dk. Düzenli nabız.",
+    desc:"Testere dişi, atriyal hız ~300/dk, 2:1 veya 4:1 blok.",
+    criteria:["Sawtooth F dalgaları","Atriyal hız ~300","2:1 → HR ~150","4:1 → HR ~75"],
+    treatment:"Rate control veya KVS 50J. Ablasyon (kesin tedavi).",
+    patients:[{hr:150,amp:1},{hr:75,amp:.95},{hr:150,amp:1.05},{hr:75,amp:.9},{hr:150,amp:1.1},{hr:100,amp:.88},{hr:150,amp:1},{hr:75,amp:.95}]},
+  { id:"svt", gen:"svt", cat:"atrial", name:"SVT (AVNRT)", lead:"dII", difficulty:2,
+    scenario:"32 yaşında kadın, ani başlayan çarpıntı, TA 115/70. 'Kalbim uçacak gibi'.",
+    desc:"Dar QRS, düzenli, hızlı, ani başlangıç. P görünmüyor.",
+    criteria:["Dar QRS","HR 150-250","Düzenli","P yok/retrograd"],
+    treatment:"Vagal manevra → Adenozin 6mg IV → 12mg → KVS.",
+    patients:[{hr:175,amp:1},{hr:190,amp:.9},{hr:165,amp:1.05},{hr:200,amp:.85},{hr:180,amp:1.1},{hr:170,amp:.88},{hr:195,amp:1},{hr:160,amp:.95}]},
+  { id:"wpw", gen:"wpw", cat:"atrial", name:"WPW Sendromu", lead:"dII", difficulty:3,
+    scenario:"24 yaşında sporcu, rutin EKG'de kısa PR ve garip QRS morfolojisi. Asemptomatik.",
+    desc:"Delta wave, kısa PR, geniş QRS. AF ile birlikte tehlikeli.",
+    criteria:["Kısa PR (<120ms)","Delta wave","Geniş QRS","WPW+AF → procainamide"],
+    treatment:"SVT → Adenozin OK. WPW+AF → Procainamide veya KVS. AV bloker VERME!",
+    patients:[{hr:80,amp:1},{hr:75,amp:.95},{hr:85,amp:1.05},{hr:78,amp:.9},{hr:82,amp:1.1},{hr:70,amp:.88},{hr:88,amp:1},{hr:76,amp:.95}]},
+  { id:"mat", gen:"mat", cat:"atrial", name:"Multifokal Atriyal Taşikardi", lead:"dII", difficulty:2,
+    scenario:"72 yaşında KOAH hastası, akut alevlenme, SpO₂ %86, düzensiz taşikardi.",
+    desc:"≥3 farklı P morfolojisi, düzensiz. KOAH'ta sık.",
+    criteria:["HR >100","≥3 farklı P şekli","Değişken PR","Düzensiz R-R"],
+    treatment:"Altta yatan nedeni tedavi et (KOAH, hipoksi). Mg sulfat.",
+    patients:[{hr:115,amp:1,seed:1},{hr:120,amp:.9,seed:2},{hr:108,amp:1.05,seed:3},{hr:125,amp:.85,seed:4},{hr:110,amp:1.1,seed:5},{hr:118,amp:.88,seed:6},{hr:105,amp:1,seed:7},{hr:130,amp:.82,seed:8}]},
+  // ── VENTRICULAR ──
+  { id:"vt", gen:"vt", cat:"ventricular", name:"Monomorfik VT", lead:"dII", difficulty:3,
+    scenario:"50 yaşında erkek, çarpıntı, TA 85/55, terleme. Bilinci açık ama konfüze.",
+    desc:"Geniş QRS, düzenli, hızlı. Nabız kontrol et!",
+    criteria:["QRS ≥120ms","HR >100","Düzenli","AV dissosiyasyon"],
+    treatment:"Nabızsız → CPR+Defib. Stabil → Amiodarone. Unstabil → KVS 100J.",
+    patients:[{hr:180,amp:1},{hr:170,amp:.95},{hr:190,amp:1.05},{hr:160,amp:.9},{hr:185,amp:1.1},{hr:175,amp:.88},{hr:195,amp:1},{hr:165,amp:.92}]},
+  { id:"pvt", gen:"pvt", cat:"ventricular", name:"Polimorfik VT", lead:"dII", difficulty:3,
+    scenario:"45 yaşında kadın, akut MI sonrası, monitörde değişken geniş QRS taşikardisi.",
+    desc:"Değişken QRS morfolojisi. QT'ye bak!",
+    criteria:["Geniş QRS","Değişken morfoloji","HR >100","QT uzunsa Torsades"],
+    treatment:"QT normal → iskemi tedavisi. QT uzun → Torsades protokolü.",
+    patients:[{hr:200,amp:1,phase:0},{hr:190,amp:.9,phase:1},{hr:210,amp:1.05,phase:2},{hr:185,amp:.85,phase:3},{hr:205,amp:1.1,phase:4},{hr:195,amp:.88,phase:5},{hr:180,amp:1,phase:6},{hr:200,amp:.95,phase:1.5}]},
+  { id:"torsades", gen:"torsades", cat:"ventricular", name:"Torsades de Pointes", lead:"dII", difficulty:3,
+    scenario:"68 yaşında kadın, QT uzatan ilaç kullanıyor, senkop ile geldi. QTc: 580ms.",
+    desc:"Polimorfik VT + uzun QT. Burulma paterni.",
+    criteria:["Polimorfik VT","Uzun QT zemin","'Burulma' görünümü","Amplitüd değişken"],
+    treatment:"MgSO₄ 2g IV + Defib + İsoproterenol veya overdrive pacing.",
+    patients:[{hr:220,amp:1},{hr:200,amp:.9},{hr:230,amp:1.1},{hr:210,amp:.85},{hr:215,amp:1.05},{hr:225,amp:.88},{hr:205,amp:1},{hr:235,amp:.82}]},
+  { id:"vf", gen:"vf", cat:"ventricular", name:"Ventriküler Fibrilasyon", lead:"dII", difficulty:3,
+    scenario:"70 yaşında, acil serviste bekleme sırasında yere yığıldı. Bilinç yok, nabız yok.",
+    desc:"Kaotik, P-QRS-T yok. NABIZ YOK. HEMEN DEFİB.",
+    criteria:["Kaotik ritim","P-QRS-T tanımlanamaz","Nabız yok"],
+    treatment:"CPR + Defib 200J + Epi 1mg + Amiodarone 300mg.",
+    continuous:true,
+    patients:[{amp:.8},{amp:.7},{amp:.9},{amp:.6},{amp:1},{amp:.75},{amp:.85},{amp:.65}]},
+  { id:"aivr", gen:"aivr", cat:"ventricular", name:"AIVR", lead:"dII", difficulty:2,
+    scenario:"55 yaşında, inferior STEMI sonrası PCI yapıldı. Monitörde HR 65, geniş QRS.",
+    desc:"Akseleratör idioventriküler ritim. HR 40-100. Reperfüzyon aritmisi.",
+    criteria:["Geniş QRS","HR 40-100","Düzenli","Genellikle iyi huylu"],
+    treatment:"Genellikle tedavi gerekmez. Reperfüzyon işareti olabilir.",
+    patients:[{hr:65,amp:1},{hr:70,amp:.95},{hr:60,amp:1.05},{hr:75,amp:.9},{hr:55,amp:1.1},{hr:68,amp:.88},{hr:72,amp:1},{hr:58,amp:.92}]},
+  // ── BLOCKS ──
+  { id:"avb1", gen:"avb1", cat:"block", name:"1° AV Blok", lead:"dII", difficulty:1,
+    scenario:"55 yaşında, beta bloker kullanan, rutin kontrol. Asemptomatik.",
+    desc:"PR >200ms ama her P iletiliyor. Genellikle selim.",
+    criteria:["PR >200ms","Her P→QRS","Düzenli"],
+    treatment:"Genellikle tedavi gerekmez. İlaç dozunu gözden geçir.",
+    patients:[{hr:62,amp:1},{hr:58,amp:.95},{hr:65,amp:1.05},{hr:55,amp:.9},{hr:68,amp:1.1},{hr:60,amp:.88},{hr:70,amp:1},{hr:56,amp:.95}]},
+  { id:"avb3", gen:"avb3", cat:"block", name:"3° Komplet AV Blok", lead:"dII", difficulty:3,
+    scenario:"82 yaşında kadın, senkop, HR 35, TA 80/50. Digoksin kullanıyor.",
+    desc:"P ve QRS tamamen ilişkisiz. ACİL pacemaker.",
+    criteria:["P-QRS ilişkisiz","P hızı > QRS hızı","Geniş escape QRS","HR 20-40"],
+    treatment:"Atropin (etkisiz olabilir) + Dopamin/Epi + Transkutan pacing → PM.",
+    patients:[{hr:35,amp:1},{hr:38,amp:.95},{hr:32,amp:1.05},{hr:40,amp:.9},{hr:30,amp:1.1},{hr:36,amp:.88},{hr:42,amp:1},{hr:28,amp:.92}]},
+  { id:"rbbb", gen:"rbbb", cat:"block", name:"RBBB", lead:"V1", difficulty:2,
+    scenario:"48 yaşında, akut nefes darlığı ile geldi. Daha önce EKG'si normaldi.",
+    desc:"V1'de rsR' (M paterni), QRS ≥120ms.",
+    criteria:["QRS ≥120ms","V1: rsR' (M)","V6: geniş S","V1: T inv"],
+    treatment:"Tek başına tedavi gerekmez. Yeni RBBB → PE, MI düşün.",
+    patients:[{hr:72,amp:1},{hr:68,amp:.95},{hr:78,amp:1.05},{hr:65,amp:.9},{hr:80,amp:1.1},{hr:70,amp:.88},{hr:75,amp:1},{hr:82,amp:.95}]},
+  { id:"lbbb", gen:"lbbb", cat:"block", name:"LBBB", lead:"V1,V6", difficulty:2,
+    scenario:"65 yaşında, göğüs ağrısı, bilinen KKY. EKG: geniş QRS.",
+    desc:"V1'de QS, V6'da geniş R. Yeni LBBB = STEMI eşdeğeri.",
+    criteria:["QRS ≥120ms","V1: QS veya rS","V6: geniş notched R"],
+    treatment:"Yeni LBBB + göğüs ağrısı → STEMI eşdeğeri → Kat lab.",
+    patients:[{hr:72,amp:1},{hr:68,amp:.95},{hr:78,amp:1.05},{hr:65,amp:.9},{hr:80,amp:1.1},{hr:70,amp:.88},{hr:75,amp:1},{hr:82,amp:.95}]},
+  // ── METABOLIC ──
+  { id:"hyperK", gen:"hyperK", cat:"metabolic", name:"Hiperkalemi", lead:"V3", difficulty:2,
+    scenario:"60 yaşında, diyaliz hastası, halsizlik, kas güçsüzlüğü. K: 7.8 mEq/L.",
+    desc:"Sivri T, geniş QRS, P kaybı. Ca glukonat HEMEN.",
+    criteria:["Sivri dar T","P kaybı","Geniş QRS","Sinusoidal (ileri)"],
+    treatment:"Ca glukonat 10ml IV → İnsülin+Dex → Salbutamol → Dializ.",
+    patients:[{hr:50,amp:1},{hr:45,amp:.95},{hr:55,amp:1.05},{hr:42,amp:.9},{hr:48,amp:1.1},{hr:52,amp:.88},{hr:40,amp:1},{hr:56,amp:.92}]},
+  { id:"hypoK", gen:"hypoK", cat:"metabolic", name:"Hipokalemi", lead:"dII", difficulty:2,
+    scenario:"45 yaşında kadın, dirençli kusma 3 gün, halsizlik, kas krampları.",
+    desc:"U dalgası, flat T, ST depresyon.",
+    criteria:["U dalgası","Flat/inverti T","ST depresyon","QT uzaması"],
+    treatment:"KCl IV (max 20mEq/s) + MgSO₄ 2g IV.",
+    patients:[{hr:72,amp:1},{hr:68,amp:.95},{hr:78,amp:1.05},{hr:75,amp:.9},{hr:80,amp:1.1},{hr:70,amp:.88},{hr:82,amp:1},{hr:65,amp:.95}]},
+  { id:"tca", gen:"tca", cat:"metabolic", name:"TCA Toksisitesi", lead:"dII", difficulty:3,
+    scenario:"20 yaşında, boş amitriptilin kutusu, bilinç bulanık, nöbet geçirmiş.",
+    desc:"Geniş QRS + taşikardi + sağ aks. NaHCO₃ HEMEN.",
+    criteria:["Geniş QRS >100ms","Taşikardi","Sağ aks","aVR tall R >3mm"],
+    treatment:"NaHCO₃ 1-2mEq/kg IV. Amiodarone VERME!",
+    patients:[{hr:120,amp:1},{hr:115,amp:.95},{hr:130,amp:1.05},{hr:125,amp:.9},{hr:110,amp:1.1},{hr:135,amp:.88},{hr:118,amp:1},{hr:128,amp:.92}]},
+  { id:"digoxin", gen:"digoxin", cat:"metabolic", name:"Digoksin Toksisitesi", lead:"dII", difficulty:2,
+    scenario:"75 yaşında, digoksin kullanan, bulantı + sarı görme + bradikardi.",
+    desc:"Reverse tick ST, her türlü aritmi. DigiFab.",
+    criteria:["'Salvador Dali' ST","Bradikardi/aritmiler","PAT + AV blok"],
+    treatment:"DigiFab + K düzelt + Atropin (bradikardi).",
+    patients:[{hr:55,amp:1},{hr:50,amp:.95},{hr:60,amp:1.05},{hr:48,amp:.9},{hr:52,amp:1.1},{hr:58,amp:.88},{hr:45,amp:1},{hr:62,amp:.95}]},
+  { id:"hypoCa", gen:"hypoCa", cat:"metabolic", name:"Hipokalsemi", lead:"dII", difficulty:2,
+    scenario:"40 yaşında kadın, tiroidektomi sonrası 2.gün, uyuşma, karıncalanma, Chvostek (+).",
+    desc:"QT uzaması (ST segment uzaması ile), T dalgası geç.",
+    criteria:["Uzun QT","ST segment uzamış","T dalgası geç ama normal şekilde","U dalgası olabilir"],
+    treatment:"Ca glukonat 10ml IV yavaş. Ca seviyesi kontrol et.",
+    patients:[{hr:72,amp:1},{hr:68,amp:.95},{hr:78,amp:1.05},{hr:65,amp:.9},{hr:75,amp:1.1},{hr:70,amp:.88},{hr:80,amp:1},{hr:66,amp:.92}]},
+  // ── OTHER ──
+  { id:"brugada", gen:"brugada", cat:"other", name:"Brugada Sendromu", lead:"V1-V2", difficulty:3,
+    scenario:"38 yaşında erkek, gece senkop, ailesinde 2 ani ölüm öyküsü.",
+    desc:"V1-V2 coved ST elevasyonu + negatif T. Ani ölüm riski.",
+    criteria:["V1-V2 coved ST ↑","Negatif T","Senkop öyküsü","Aile öyküsü"],
+    treatment:"Kardiyoloji → ICD değerlendirmesi.",
+    patients:[{hr:68,amp:1},{hr:72,amp:.95},{hr:65,amp:1.05},{hr:70,amp:.9},{hr:75,amp:1.1},{hr:62,amp:.88},{hr:78,amp:1},{hr:66,amp:.95}]},
+  { id:"longQT", gen:"longQT", cat:"other", name:"Uzun QT Sendromu", lead:"dII", difficulty:2,
+    scenario:"18 yaşında kız, yüzerken bayılma öyküsü. Ailede ani ölüm var. QTc: 520ms.",
+    desc:"QTc >500ms → Torsades riski. İlaç? Konjenital?",
+    criteria:["QTc >440ms (erkek)","QTc >460ms (kadın)","QTc >500 = yüksek risk"],
+    treatment:"Neden bul (ilaç, elektrolit). Mg sulfat. QTc >500 → izlem.",
+    patients:[{hr:60,amp:1},{hr:55,amp:.95},{hr:65,amp:1.05},{hr:58,amp:.9},{hr:62,amp:1.1},{hr:52,amp:.88},{hr:68,amp:1},{hr:56,amp:.95}]},
+  { id:"pericarditis", gen:"pericarditis", cat:"other", name:"Perikardit", lead:"dII", difficulty:2,
+    scenario:"28 yaşında erkek, 2 gün önce viral ÜSYE, keskin göğüs ağrısı, öne eğilince rahatliyor.",
+    desc:"Yaygın konkav ST ↑ + PR depresyonu.",
+    criteria:["Yaygın konkav ST ↑","PR depresyon","aVR: PR ↑ + ST ↓"],
+    treatment:"NSAİİ (İbuprofen) + Kolşisin. STEMI değil!",
+    patients:[{hr:90,amp:1},{hr:85,amp:.95},{hr:95,amp:1.05},{hr:88,amp:.9},{hr:92,amp:1.1},{hr:82,amp:.88},{hr:98,amp:1},{hr:86,amp:.95}]},
+  { id:"hypothermia", gen:"hypothermia", cat:"other", name:"Hipotermi (Osborn)", lead:"dII", difficulty:2,
+    scenario:"50 yaşında evsiz, kışta bulunmuş, vücut sıcaklığı 30°C, konfüze.",
+    desc:"J dalgası (Osborn wave), bradikardi, QT uzaması.",
+    criteria:["Osborn J dalgası","Bradikardi","QT uzaması","AF olabilir"],
+    treatment:"Hasta ısıtmadan antiaritmik etkisiz. Isıt!",
+    patients:[{hr:45,amp:1},{hr:40,amp:.95},{hr:50,amp:1.05},{hr:38,amp:.9},{hr:42,amp:1.1},{hr:48,amp:.88},{hr:35,amp:1},{hr:52,amp:.95}]},
+  { id:"paced", gen:"paced", cat:"other", name:"Pacemaker Ritmi", lead:"dII", difficulty:2,
+    scenario:"75 yaşında, PM takılmış (3° AVB), rutin kontrol. Asemptomatik.",
+    desc:"Spike + geniş QRS. Capture ve sensing kontrol.",
+    criteria:["Pacing spike","Geniş QRS (LBBB)","Düzenli","Diskordant T"],
+    treatment:"Normal capture → sorun yok. Failure to capture → ACİL.",
+    patients:[{hr:70,amp:1},{hr:60,amp:.95},{hr:70,amp:1.05},{hr:60,amp:.9},{hr:70,amp:1.1},{hr:60,amp:.88},{hr:70,amp:1},{hr:60,amp:.95}]},
+  { id:"pe", gen:"pe", cat:"other", name:"PE (Pulmoner Emboli)", lead:"dII", difficulty:2,
+    scenario:"55 yaşında kadın, ameliyat sonrası 5.gün, ani nefes darlığı, SpO₂ %88, taşikardik.",
+    desc:"Sinüs taşikardi + sağ aks + S1Q3T3. EKG tanı koymaz.",
+    criteria:["Sinüs taşikardi","S1Q3T3","Sağ aks","Yeni RBBB","V1-V4 T inv"],
+    treatment:"EKG şüphelendirir → Wells skoru + D-dimer + BT anjiyo.",
+    patients:[{hr:108,amp:1},{hr:115,amp:.95},{hr:105,amp:1.05},{hr:120,amp:.9},{hr:110,amp:1.1},{hr:100,amp:.88},{hr:125,amp:1},{hr:112,amp:.92}]},
+];
+
+/* ═══════════════════════════════════════════════════════════════
+   12-LEAD PROFILES — how each lead looks for each pattern
+   Format: { scale, stShift, tInvert, useGen }
+   ═══════════════════════════════════════════════════════════════ */
+const LEADS = ["I","II","III","aVR","aVL","aVF","V1","V2","V3","V4","V5","V6"];
+const defaultLead = { scale: 1, stShift: 0, tInvert: false };
+
+const leadProfiles = {
+  stemi_ant: {
+    I:{scale:.9,stShift:.08}, II:{scale:1,stShift:.03}, III:{scale:.7,stShift:-.05},
+    aVR:{scale:.5,stShift:-.10,tInvert:true}, aVL:{scale:.7,stShift:.10}, aVF:{scale:.8,stShift:-.06},
+    V1:{scale:.8,stShift:.25}, V2:{scale:1,stShift:.40}, V3:{scale:1,stShift:.42}, V4:{scale:.95,stShift:.35},
+    V5:{scale:.85,stShift:.12}, V6:{scale:.8,stShift:.05},
+  },
+  stemi_inf: {
+    I:{scale:.9,stShift:-.03}, II:{scale:1,stShift:.30}, III:{scale:.95,stShift:.35},
+    aVR:{scale:.5,stShift:-.08,tInvert:true}, aVL:{scale:.7,stShift:-.20,tInvert:true}, aVF:{scale:1,stShift:.32},
+    V1:{scale:.7,stShift:-.02}, V2:{scale:.75,stShift:-.03}, V3:{scale:.8,stShift:-.02}, V4:{scale:.85,stShift:0},
+    V5:{scale:.9,stShift:.02}, V6:{scale:.85,stShift:.05},
+  },
+  stemi_lat: {
+    I:{scale:1,stShift:.28}, II:{scale:.9,stShift:.05}, III:{scale:.7,stShift:-.12},
+    aVR:{scale:.5,stShift:-.15,tInvert:true}, aVL:{scale:1,stShift:.30}, aVF:{scale:.8,stShift:-.10},
+    V1:{scale:.6,stShift:0}, V2:{scale:.65,stShift:0}, V3:{scale:.7,stShift:.03}, V4:{scale:.8,stShift:.05},
+    V5:{scale:.95,stShift:.25}, V6:{scale:1,stShift:.28},
+  },
+  stemi_post: {
+    I:{scale:.9,stShift:0}, II:{scale:1,stShift:.05}, III:{scale:.8,stShift:.04},
+    aVR:{scale:.5,stShift:-.05,tInvert:true}, aVL:{scale:.6,stShift:-.02}, aVF:{scale:.85,stShift:.04},
+    V1:{scale:1,stShift:-.18}, V2:{scale:1,stShift:-.22}, V3:{scale:.95,stShift:-.18}, V4:{scale:.85,stShift:-.05},
+    V5:{scale:.8,stShift:.02}, V6:{scale:.8,stShift:.04},
+  },
+  nsr: {
+    I:{scale:.9}, II:{scale:1}, III:{scale:.7}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.8},
+    V1:{scale:.6}, V2:{scale:.8}, V3:{scale:1}, V4:{scale:1}, V5:{scale:.9}, V6:{scale:.8},
+  },
+  nstemi: {
+    I:{scale:.85,stShift:-.08}, II:{scale:1,stShift:-.05}, III:{scale:.7,stShift:-.03},
+    aVR:{scale:.5,stShift:.10,tInvert:true}, aVL:{scale:.65,stShift:-.10}, aVF:{scale:.8,stShift:-.04},
+    V1:{scale:.6,stShift:-.03}, V2:{scale:.8,stShift:-.08}, V3:{scale:1,stShift:-.12}, V4:{scale:1,stShift:-.15},
+    V5:{scale:.9,stShift:-.10}, V6:{scale:.85,stShift:-.06},
+  },
+  wellens: {
+    I:{scale:.85}, II:{scale:1}, III:{scale:.7}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6},aVF:{scale:.8},
+    V1:{scale:.6,tInvert:true}, V2:{scale:.9,tInvert:true}, V3:{scale:1,tInvert:true}, V4:{scale:.85,tInvert:true},
+    V5:{scale:.8}, V6:{scale:.75},
+  },
+  dewinter: {
+    I:{scale:.85,stShift:-.05}, II:{scale:1,stShift:-.04}, III:{scale:.7,stShift:-.02},
+    aVR:{scale:.5,stShift:.12,tInvert:true}, aVL:{scale:.6,stShift:-.03}, aVF:{scale:.8,stShift:-.02},
+    V1:{scale:.7,stShift:-.08}, V2:{scale:.85,stShift:-.12}, V3:{scale:1,stShift:-.15}, V4:{scale:1,stShift:-.14},
+    V5:{scale:.9,stShift:-.10}, V6:{scale:.85,stShift:-.06},
+  },
+  afib: {
+    I:{scale:.85}, II:{scale:1}, III:{scale:.7}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.75},
+    V1:{scale:.55}, V2:{scale:.75}, V3:{scale:.95}, V4:{scale:1}, V5:{scale:.9}, V6:{scale:.8},
+  },
+  aflutter: {
+    I:{scale:.85}, II:{scale:1}, III:{scale:.8}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.85},
+    V1:{scale:.6}, V2:{scale:.75}, V3:{scale:.9}, V4:{scale:1}, V5:{scale:.9}, V6:{scale:.8},
+  },
+  svt: {
+    I:{scale:.85}, II:{scale:1}, III:{scale:.7}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.8},
+    V1:{scale:.55}, V2:{scale:.75}, V3:{scale:.95}, V4:{scale:1}, V5:{scale:.9}, V6:{scale:.8},
+  },
+  wpw: {
+    I:{scale:.9}, II:{scale:1}, III:{scale:.8}, aVR:{scale:.6,tInvert:true}, aVL:{scale:.65}, aVF:{scale:.85},
+    V1:{scale:.7}, V2:{scale:.85}, V3:{scale:1}, V4:{scale:1}, V5:{scale:.9}, V6:{scale:.85},
+  },
+  mat: {
+    I:{scale:.85}, II:{scale:1}, III:{scale:.7}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.8},
+    V1:{scale:.6}, V2:{scale:.8}, V3:{scale:1}, V4:{scale:1}, V5:{scale:.9}, V6:{scale:.8},
+  },
+  vt: {
+    I:{scale:1}, II:{scale:1}, III:{scale:.9}, aVR:{scale:.8,tInvert:true}, aVL:{scale:.85}, aVF:{scale:.95},
+    V1:{scale:.9}, V2:{scale:.95}, V3:{scale:1}, V4:{scale:1}, V5:{scale:.95}, V6:{scale:.9},
+  },
+  pvt: {
+    I:{scale:1}, II:{scale:1}, III:{scale:.9}, aVR:{scale:.8}, aVL:{scale:.85}, aVF:{scale:.95},
+    V1:{scale:.9}, V2:{scale:.95}, V3:{scale:1}, V4:{scale:1}, V5:{scale:.95}, V6:{scale:.9},
+  },
+  torsades: {
+    I:{scale:1}, II:{scale:1}, III:{scale:.9}, aVR:{scale:.8}, aVL:{scale:.85}, aVF:{scale:.95},
+    V1:{scale:.9}, V2:{scale:1}, V3:{scale:1}, V4:{scale:.95}, V5:{scale:.9}, V6:{scale:.85},
+  },
+  vf: {
+    I:{scale:.9}, II:{scale:1}, III:{scale:.85}, aVR:{scale:.8}, aVL:{scale:.75}, aVF:{scale:.9},
+    V1:{scale:.8}, V2:{scale:.9}, V3:{scale:1}, V4:{scale:.95}, V5:{scale:.85}, V6:{scale:.8},
+  },
+  aivr: {
+    I:{scale:.9}, II:{scale:1}, III:{scale:.8}, aVR:{scale:.6,tInvert:true}, aVL:{scale:.7}, aVF:{scale:.85},
+    V1:{scale:.7}, V2:{scale:.85}, V3:{scale:1}, V4:{scale:.95}, V5:{scale:.9}, V6:{scale:.85},
+  },
+  avb1: {
+    I:{scale:.9}, II:{scale:1}, III:{scale:.7}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.8},
+    V1:{scale:.6}, V2:{scale:.8}, V3:{scale:1}, V4:{scale:1}, V5:{scale:.9}, V6:{scale:.8},
+  },
+  avb3: {
+    I:{scale:.9}, II:{scale:1}, III:{scale:.8}, aVR:{scale:.6,tInvert:true}, aVL:{scale:.65}, aVF:{scale:.85},
+    V1:{scale:.7}, V2:{scale:.85}, V3:{scale:1}, V4:{scale:.95}, V5:{scale:.9}, V6:{scale:.85},
+  },
+  rbbb: {
+    I:{scale:.9}, II:{scale:1}, III:{scale:.7}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.8},
+    V1:{scale:1.1}, V2:{scale:.9}, V3:{scale:.85}, V4:{scale:.9}, V5:{scale:.85}, V6:{scale:.8},
+  },
+  lbbb: {
+    I:{scale:.9}, II:{scale:1}, III:{scale:.7}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.8},
+    V1:{scale:1,tInvert:true}, V2:{scale:.9,tInvert:true}, V3:{scale:.85}, V4:{scale:.9}, V5:{scale:1}, V6:{scale:1.1},
+  },
+  hyperK: {
+    I:{scale:.8}, II:{scale:1}, III:{scale:.7}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.8},
+    V1:{scale:.7}, V2:{scale:.85}, V3:{scale:1}, V4:{scale:1}, V5:{scale:.9}, V6:{scale:.85},
+  },
+  hypoK: {
+    I:{scale:.85}, II:{scale:1}, III:{scale:.7}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.8},
+    V1:{scale:.6}, V2:{scale:.8}, V3:{scale:1}, V4:{scale:1}, V5:{scale:.9}, V6:{scale:.85},
+  },
+  hypoCa: {
+    I:{scale:.85}, II:{scale:1}, III:{scale:.7}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.8},
+    V1:{scale:.6}, V2:{scale:.8}, V3:{scale:1}, V4:{scale:1}, V5:{scale:.9}, V6:{scale:.85},
+  },
+  tca: {
+    I:{scale:.9}, II:{scale:1}, III:{scale:.8}, aVR:{scale:.8}, aVL:{scale:.7}, aVF:{scale:.85},
+    V1:{scale:.8}, V2:{scale:.9}, V3:{scale:1}, V4:{scale:.95}, V5:{scale:.9}, V6:{scale:.85},
+  },
+  digoxin: {
+    I:{scale:.85}, II:{scale:1}, III:{scale:.75}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.8},
+    V1:{scale:.6}, V2:{scale:.8}, V3:{scale:1}, V4:{scale:1}, V5:{scale:.9}, V6:{scale:.85},
+  },
+  brugada: {
+    I:{scale:.85}, II:{scale:1}, III:{scale:.7}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.8},
+    V1:{scale:1.1,stShift:.20}, V2:{scale:1,stShift:.15}, V3:{scale:.8,stShift:.05}, V4:{scale:.8}, V5:{scale:.85}, V6:{scale:.8},
+  },
+  longQT: {
+    I:{scale:.85}, II:{scale:1}, III:{scale:.7}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.8},
+    V1:{scale:.6}, V2:{scale:.8}, V3:{scale:1}, V4:{scale:1}, V5:{scale:.9}, V6:{scale:.85},
+  },
+  pericarditis: {
+    I:{scale:.9,stShift:.12}, II:{scale:1,stShift:.15}, III:{scale:.8,stShift:.10},
+    aVR:{scale:.5,stShift:-.12,tInvert:true}, aVL:{scale:.7,stShift:.08}, aVF:{scale:.85,stShift:.12},
+    V1:{scale:.6,stShift:.05}, V2:{scale:.8,stShift:.10}, V3:{scale:1,stShift:.14}, V4:{scale:1,stShift:.15},
+    V5:{scale:.9,stShift:.12}, V6:{scale:.85,stShift:.10},
+  },
+  hypothermia: {
+    I:{scale:.85}, II:{scale:1}, III:{scale:.75}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.8},
+    V1:{scale:.65}, V2:{scale:.8}, V3:{scale:1}, V4:{scale:1}, V5:{scale:.9}, V6:{scale:.85},
+  },
+  paced: {
+    I:{scale:.85}, II:{scale:1}, III:{scale:.8}, aVR:{scale:.6,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.85},
+    V1:{scale:.8,tInvert:true}, V2:{scale:.85,tInvert:true}, V3:{scale:.9}, V4:{scale:1}, V5:{scale:1}, V6:{scale:.95},
+  },
+  pe: {
+    I:{scale:.9,stShift:-.02}, II:{scale:1}, III:{scale:.8,stShift:.03}, aVR:{scale:.5,tInvert:true}, aVL:{scale:.6}, aVF:{scale:.8},
+    V1:{scale:.7,tInvert:true}, V2:{scale:.75,tInvert:true}, V3:{scale:.8,tInvert:true}, V4:{scale:.85}, V5:{scale:.9}, V6:{scale:.85},
+  },
+};
+
+// Default profile generator
+function getLeadProfile(patternId) {
+  if (leadProfiles[patternId]) return leadProfiles[patternId];
+  // Generate default based on NSR-like distribution
+  const def = {};
+  const scales = {I:.9,II:1,III:.7,aVR:.5,aVL:.6,aVF:.8,V1:.6,V2:.8,V3:1,V4:1,V5:.9,V6:.8};
+  for (const l of LEADS) def[l] = { scale: scales[l] || .8, stShift: 0, tInvert: l === "aVR" };
+  return def;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   12-LEAD CANVAS RENDERER
+   ═══════════════════════════════════════════════════════════════ */
+function render12Lead(canvas, pattern, patientIdx) {
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+
+  // Background
+  ctx.fillStyle = "#FFF8F0";
+  ctx.fillRect(0, 0, W, H);
+
+  // Layout: 4 columns x 3 rows + rhythm strip
+  const cols = 4, rows = 3;
+  const margin = { top: 28, left: 36, right: 8, bottom: 40 };
+  const cellW = (W - margin.left - margin.right) / cols;
+  const cellH = (H - margin.top - margin.bottom - 36) / (rows + 0.6); // extra for rhythm
+  const leadLayout = [
+    ["I","aVR","V1","V4"],
+    ["II","aVL","V2","V5"],
+    ["III","aVF","V3","V6"],
+  ];
+
+  const gFn = gen[pattern.gen];
+  if (!gFn) return;
+  const patient = pattern.patients[patientIdx] || pattern.patients[0];
+  const hr = patient.hr || 72;
+  const rr = 60 / hr;
+  const profile = getLeadProfile(pattern.id || pattern.gen);
+
+  // Header
+  ctx.fillStyle = "#444";
+  ctx.font = "bold 11px system-ui";
+  ctx.fillText(`12 Derivasyon EKG  ·  HR: ${hr}/dk  ·  25mm/s  ·  10mm/mV`, margin.left, 16);
+  ctx.fillStyle = "#999";
+  ctx.font = "10px system-ui";
+  ctx.fillText(`Hasta ${patientIdx + 1}`, W - 70, 16);
+
+  // Draw each lead cell
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const leadName = leadLayout[r][c];
+      const x = margin.left + c * cellW;
+      const y = margin.top + r * cellH;
+      const lp = profile[leadName] || defaultLead;
+
+      // Cell border
+      ctx.strokeStyle = "#E8D0D0";
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(x, y, cellW, cellH);
+
+      // Mini grid
+      const gs = cellW / 12;
+      ctx.strokeStyle = "#F5E0E0";
+      ctx.lineWidth = 0.2;
+      for (let gx = x; gx < x + cellW; gx += gs) { ctx.beginPath(); ctx.moveTo(gx, y); ctx.lineTo(gx, y + cellH); ctx.stroke(); }
+      for (let gy = y; gy < y + cellH; gy += gs) { ctx.beginPath(); ctx.moveTo(x, gy); ctx.lineTo(x + cellW, gy); ctx.stroke(); }
+      ctx.strokeStyle = "#E8C0C0";
+      ctx.lineWidth = 0.4;
+      for (let gx = x; gx < x + cellW; gx += gs * 5) { ctx.beginPath(); ctx.moveTo(gx, y); ctx.lineTo(gx, y + cellH); ctx.stroke(); }
+
+      // Lead label
+      ctx.fillStyle = "#B5272B";
+      ctx.font = "bold 9px system-ui";
+      ctx.fillText(leadName, x + 3, y + 11);
+
+      // Draw ECG trace
+      const midY = y + cellH * 0.5;
+      const ampS = cellH * 0.35 * (lp.scale || 1);
+      const dur = 2.5;
+      const invertMul = lp.tInvert ? -1 : 1;
+      const stS = (lp.stShift || 0) * cellH * 0.35;
+
+      ctx.strokeStyle = "#0D1B2A";
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      let started = false;
+
+      if (pattern.continuous) {
+        for (let i = 0; i < cellW; i++) {
+          const t = (i / cellW) * dur;
+          const val = gFn(t, patient, t) * ampS * invertMul * 0.6;
+          const py = midY - val - stS;
+          if (!started) { ctx.moveTo(x + i, py); started = true; } else ctx.lineTo(x + i, py);
+        }
+      } else if (pattern.irregular) {
+        const rrList = pattern.rrIntervals || [.5,.6,.4,.7,.5];
+        for (let i = 0; i < cellW; i++) {
+          const gT = (i / cellW) * dur;
+          let localT = null, tempStart = 0.1, ti = 0;
+          while (tempStart < dur && ti < 20) {
+            const rv = rrList[ti % rrList.length];
+            if (gT >= tempStart && gT < tempStart + rv) { localT = gT - tempStart; break; }
+            tempStart += rv; ti++;
+          }
+          let py = midY;
+          if (localT !== null) py = midY - gFn(localT, patient, gT) * ampS * invertMul - stS;
+          if (!started) { ctx.moveTo(x + i, py); started = true; } else ctx.lineTo(x + i, py);
+        }
+      } else {
+        let beatStart = 0.08;
+        while (beatStart < dur) {
+          for (let i = 0; i < cellW; i++) {
+            const gT = (i / cellW) * dur;
+            if (gT >= beatStart && gT < beatStart + rr) {
+              const localT = gT - beatStart;
+              const noise = Math.sin(i * 7.3 + r * 3.1) * 0.005;
+              const val = (gFn(localT, patient, gT) + noise) * ampS * invertMul;
+              const py = midY - val - stS;
+              if (!started) { ctx.moveTo(x + i, py); started = true; } else ctx.lineTo(x + i, py);
+            }
+          }
+          beatStart += rr;
+        }
+      }
+      ctx.stroke();
+    }
+  }
+
+  // Rhythm strip (Lead II, full width)
+  const rsY = margin.top + rows * cellH + 8;
+  const rsH = cellH * 0.55;
+  ctx.strokeStyle = "#E8D0D0";
+  ctx.lineWidth = 0.5;
+  ctx.strokeRect(margin.left, rsY, W - margin.left - margin.right, rsH);
+  ctx.fillStyle = "#B5272B";
+  ctx.font = "bold 9px system-ui";
+  ctx.fillText("II (ritim)", margin.left + 3, rsY + 11);
+
+  const rsMidY = rsY + rsH * 0.5;
+  const rsAmp = rsH * 0.35;
+  const rsW = W - margin.left - margin.right;
+  const rsDur = 6;
+  ctx.strokeStyle = "#0D1B2A";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  let rsStarted = false;
+
+  if (pattern.continuous) {
+    for (let i = 0; i < rsW; i++) {
+      const t = (i / rsW) * rsDur;
+      const py = rsMidY - gFn(t, patient, t) * rsAmp * 0.6;
+      if (!rsStarted) { ctx.moveTo(margin.left + i, py); rsStarted = true; } else ctx.lineTo(margin.left + i, py);
+    }
+  } else if (pattern.irregular) {
+    const rrList = pattern.rrIntervals || [.5,.6,.4,.7,.5];
+    for (let i = 0; i < rsW; i++) {
+      const gT = (i / rsW) * rsDur;
+      let localT = null, tempStart = 0.1, ti = 0;
+      while (tempStart < rsDur && ti < 30) {
+        const rv = rrList[ti % rrList.length];
+        if (gT >= tempStart && gT < tempStart + rv) { localT = gT - tempStart; break; }
+        tempStart += rv; ti++;
+      }
+      let py = rsMidY;
+      if (localT !== null) py = rsMidY - gFn(localT, patient, gT) * rsAmp;
+      if (!rsStarted) { ctx.moveTo(margin.left + i, py); rsStarted = true; } else ctx.lineTo(margin.left + i, py);
+    }
+  } else {
+    let beatStart = 0.1;
+    while (beatStart < rsDur) {
+      for (let i = 0; i < rsW; i++) {
+        const gT = (i / rsW) * rsDur;
+        if (gT >= beatStart && gT < beatStart + rr) {
+          const localT = gT - beatStart;
+          const py = rsMidY - gFn(localT, patient, gT) * rsAmp;
+          if (!rsStarted) { ctx.moveTo(margin.left + i, py); rsStarted = true; } else ctx.lineTo(margin.left + i, py);
+        }
+      }
+      beatStart += rr;
+    }
+  }
+  ctx.stroke();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CANVAS RENDERERS — Single lead (paper style)
+   ═══════════════════════════════════════════════════════════════ */
+function renderPaperECG(canvas, pattern, patientIdx, opts = {}) {
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const w = rect.width, h = rect.height;
+
+  // Paper background
+  ctx.fillStyle = "#FFF8F0";
+  ctx.fillRect(0, 0, w, h);
+
+  // Grid
+  const gs = w / 50;
+  ctx.strokeStyle = "#F0D0D0";
+  ctx.lineWidth = 0.3;
+  for (let x = 0; x < w; x += gs) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+  for (let y = 0; y < h; y += gs) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+  ctx.strokeStyle = "#E0A0A0";
+  ctx.lineWidth = 0.7;
+  for (let x = 0; x < w; x += gs * 5) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+  for (let y = 0; y < h; y += gs * 5) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+
+  const gFn = gen[pattern.gen];
+  if (!gFn) return;
+  const patient = pattern.patients[patientIdx] || pattern.patients[0];
+  const hr = patient.hr || 72;
+  const rr = 60 / hr;
+  const dur = 5.5;
+  const midY = h * 0.48;
+  const amp = h * 0.30;
+
+  // Generate and draw
+  ctx.strokeStyle = "#0D1B2A";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+
+  const isIrregular = pattern.irregular;
+  const isContinuous = pattern.continuous;
+  let started = false;
+
+  if (isContinuous) {
+    for (let i = 0; i < w; i++) {
+      const t = (i / w) * dur;
+      const y = midY - gFn(t, patient, t) * amp * 0.7;
+      if (!started) { ctx.moveTo(i, y); started = true; } else ctx.lineTo(i, y);
+    }
+  } else if (isIrregular) {
+    const rrList = pattern.rrIntervals || [.5,.6,.4,.7,.5];
+    let beatStart = 0.15;
+    let rrIdx = 0;
+    for (let i = 0; i < w; i++) {
+      const gT = (i / w) * dur;
+      let localT = null;
+      let tempStart = 0.15;
+      let ti = 0;
+      while (tempStart < dur && ti < 30) {
+        const rrVal = rrList[ti % rrList.length] * (0.85 + 0.3 * (patient.amp || 1) / 1.1);
+        if (gT >= tempStart && gT < tempStart + rrVal) { localT = gT - tempStart; break; }
+        tempStart += rrVal; ti++;
+      }
+      let y = midY;
+      if (localT !== null) y = midY - gFn(localT, patient, gT) * amp;
+      else y = midY - (Math.random() - 0.5) * 3;
+      if (!started) { ctx.moveTo(i, y); started = true; } else ctx.lineTo(i, y);
+    }
+  } else {
+    let beatStart = 0.15;
+    while (beatStart < dur) {
+      for (let i = 0; i < w; i++) {
+        const gT = (i / w) * dur;
+        if (gT >= beatStart && gT < beatStart + rr) {
+          const localT = gT - beatStart;
+          const noise = (Math.sin(i * 7.3) * 0.008 + Math.sin(i * 13.7) * 0.005) * (patient.noise || .008) * 100;
+          const y = midY - (gFn(localT, patient, gT) + noise) * amp;
+          if (!started) { ctx.moveTo(i, y); started = true; } else ctx.lineTo(i, y);
+        }
+      }
+      beatStart += rr;
+    }
+  }
+  ctx.stroke();
+
+  // Label
+  if (opts.showLabel !== false) {
+    ctx.fillStyle = "#666";
+    ctx.font = "10px system-ui";
+    ctx.fillText(`${pattern.lead} · ${hr > 0 ? hr + "/dk" : "---"} · 25mm/s · Hasta ${patientIdx + 1}`, 8, h - 6);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MAIN APP
+   ═══════════════════════════════════════════════════════════════ */
+const font = "'Georgia', 'Cambria', 'Times New Roman', serif";
+const sansFont = "'Segoe UI', 'Helvetica Neue', system-ui, sans-serif";
+
+// Color palette - clinical clean
+const CL = {
+  bg: "#F7F8FA",
+  card: "#FFFFFF",
+  border: "#E2E6EC",
+  text: "#1A2332",
+  sub: "#5A6878",
+  blue: "#1B4A8A",
+  blueLight: "#EBF1FA",
+  red: "#B5272B",
+  redLight: "#FDF0F0",
+  green: "#1A6B3C",
+  greenLight: "#EEF7F1",
+  gold: "#8A6B00",
+  goldLight: "#FFF9E8",
+  accent: "#1B4A8A",
+};
+
+function Header({ onNav, current }) {
+  return (
+    <div style={{ background: "#FFFFFF", borderBottom: `2px solid ${CL.blue}`, padding: "0 24px", position: "sticky", top: 0, zIndex: 100 }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 64 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 8, background: CL.blue, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ color: "white", fontSize: 18 }}>♡</span>
+          </div>
+          <div>
+            <div style={{ fontFamily: font, fontSize: 17, fontWeight: 700, color: CL.text, letterSpacing: -.3 }}>ERFrame ECG</div>
+            <div style={{ fontFamily: sansFont, fontSize: 11, color: CL.sub }}>Dr. Amir Reza Zirakpourazar</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 4 }}>
+          {[["menu","Ana Sayfa"],["learn","Öğren"],["test","Test Et"]].map(([id, label]) => (
+            <button key={id} onClick={() => onNav(id)}
+              style={{
+                fontFamily: sansFont, fontSize: 13, fontWeight: current === id ? 700 : 500,
+                color: current === id ? CL.blue : CL.sub,
+                background: current === id ? CL.blueLight : "transparent",
+                border: "none", borderRadius: 6, padding: "8px 16px", cursor: "pointer",
+                transition: "all .2s",
+              }}>{label}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ECGCanvas({ pattern, patientIdx = 0, height = 180, showLabel = true }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current) renderPaperECG(ref.current, pattern, patientIdx, { showLabel });
+  }, [pattern, patientIdx, showLabel]);
+  return <canvas ref={ref} style={{ width: "100%", height, borderRadius: 6, border: `1px solid ${CL.border}` }} />;
+}
+
+function ECG12LeadCanvas({ pattern, patientIdx = 0 }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current) render12Lead(ref.current, pattern, patientIdx);
+  }, [pattern, patientIdx]);
+  return <canvas ref={ref} style={{ width: "100%", height: 420, borderRadius: 6, border: `1px solid ${CL.border}` }} />;
+}
+
+/* ── HOME ── */
+function Home({ onNav }) {
+  return (
+    <div style={{ maxWidth: 900, margin: "0 auto", padding: "48px 20px" }}>
+      <div style={{ textAlign: "center", marginBottom: 48 }}>
+        <h1 style={{ fontFamily: font, fontSize: 32, color: CL.text, margin: "0 0 8px", fontWeight: 700 }}>Acil EKG Pratiği</h1>
+        <p style={{ fontFamily: sansFont, fontSize: 15, color: CL.sub, margin: 0 }}>35 EKG pattern · 280+ hasta varyasyonu · Kanıta dayalı</p>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 40 }}>
+        {[
+          { id: "learn", icon: "📖", title: "Öğren", desc: "Kategorize referans. Her ritmi incele, gerçek EKG örnekleri, tanı kriterleri, tedavi protokolü.", color: CL.blue, bg: CL.blueLight },
+          { id: "test", icon: "✍", title: "Test Et", desc: "Rastgele quiz. Klinik senaryo + EKG → tanını seç. Skor takibi ve detaylı açıklama.", color: CL.green, bg: CL.greenLight },
+        ].map(s => (
+          <button key={s.id} onClick={() => onNav(s.id)}
+            style={{
+              background: s.bg, border: `2px solid ${s.color}22`, borderRadius: 12,
+              padding: 28, cursor: "pointer", textAlign: "left", transition: "all .2s",
+            }}
+            onMouseEnter={e => e.currentTarget.style.borderColor = s.color}
+            onMouseLeave={e => e.currentTarget.style.borderColor = s.color + "22"}>
+            <div style={{ fontSize: 28, marginBottom: 8 }}>{s.icon}</div>
+            <div style={{ fontFamily: font, fontSize: 20, fontWeight: 700, color: s.color, marginBottom: 6 }}>{s.title}</div>
+            <div style={{ fontFamily: sansFont, fontSize: 13, color: CL.sub, lineHeight: 1.5 }}>{s.desc}</div>
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        {[{ n: "35", l: "EKG Pattern" }, { n: "280+", l: "Hasta Örneği" }, { n: "7", l: "Kategori" }, { n: "∞", l: "Quiz Sorusu" }].map((s, i) => (
+          <div key={i} style={{ background: CL.card, border: `1px solid ${CL.border}`, borderRadius: 8, padding: 16, textAlign: "center" }}>
+            <div style={{ fontFamily: font, fontSize: 24, fontWeight: 700, color: CL.blue }}>{s.n}</div>
+            <div style={{ fontFamily: sansFont, fontSize: 11, color: CL.sub, marginTop: 2 }}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── LEARN ── */
+function Learn({ onNav }) {
+  const [selCat, setSelCat] = useState(null);
+  const [selPattern, setSelPattern] = useState(null);
+  const [patientIdx, setPatientIdx] = useState(0);
+  const [viewMode, setViewMode] = useState("single"); // "single" or "12lead"
+
+  if (selPattern) {
+    const p = selPattern;
+    const cat = CATEGORIES.find(c => c.id === p.cat);
+    return (
+      <div style={{ maxWidth: 1000, margin: "0 auto", padding: "24px 20px" }}>
+        <button onClick={() => { setSelPattern(null); setPatientIdx(0); setViewMode("single"); }}
+          style={{ fontFamily: sansFont, fontSize: 13, color: CL.sub, background: "none", border: "none", cursor: "pointer", marginBottom: 16 }}>
+          ← {cat?.name || "Geri"}
+        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16 }}>
+          <span style={{ background: cat?.color || CL.blue, color: "white", padding: "4px 10px", borderRadius: 4, fontSize: 11, fontFamily: sansFont }}>{cat?.name}</span>
+          <h2 style={{ fontFamily: font, fontSize: 22, color: CL.text, margin: 0 }}>{p.name}</h2>
+          <span style={{ fontSize: 12, color: CL.sub }}>{"★".repeat(p.difficulty)}{"☆".repeat(3 - p.difficulty)}</span>
+        </div>
+        <p style={{ fontFamily: sansFont, fontSize: 14, color: CL.sub, margin: "0 0 20px", lineHeight: 1.6 }}>{p.desc}</p>
+
+        {/* ECG View */}
+        <div style={{ background: CL.card, border: `1px solid ${CL.border}`, borderRadius: 10, padding: 16, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontFamily: sansFont, fontSize: 12, fontWeight: 600, color: CL.text }}>Hasta {patientIdx + 1} / {p.patients.length}</span>
+              {/* View mode toggle */}
+              <div style={{ display: "flex", background: CL.blueLight, borderRadius: 6, padding: 2 }}>
+                <button onClick={() => setViewMode("single")}
+                  style={{
+                    fontFamily: sansFont, fontSize: 11, fontWeight: 600, padding: "5px 12px", borderRadius: 4, border: "none", cursor: "pointer",
+                    background: viewMode === "single" ? CL.blue : "transparent",
+                    color: viewMode === "single" ? "white" : CL.blue,
+                  }}>Tek Strip</button>
+                <button onClick={() => setViewMode("12lead")}
+                  style={{
+                    fontFamily: sansFont, fontSize: 11, fontWeight: 600, padding: "5px 12px", borderRadius: 4, border: "none", cursor: "pointer",
+                    background: viewMode === "12lead" ? CL.blue : "transparent",
+                    color: viewMode === "12lead" ? "white" : CL.blue,
+                  }}>12 Derivasyon</button>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 4 }}>
+              {p.patients.map((_, i) => (
+                <button key={i} onClick={() => setPatientIdx(i)}
+                  style={{
+                    width: 28, height: 28, borderRadius: 6, fontSize: 11, fontFamily: sansFont,
+                    background: i === patientIdx ? CL.blue : CL.blueLight,
+                    color: i === patientIdx ? "white" : CL.blue,
+                    border: "none", cursor: "pointer", fontWeight: 600,
+                  }}>{i + 1}</button>
+              ))}
+            </div>
+          </div>
+          {viewMode === "single" 
+            ? <ECGCanvas pattern={p} patientIdx={patientIdx} height={200} />
+            : <ECG12LeadCanvas pattern={p} patientIdx={patientIdx} />
+          }
+        </div>
+
+        {/* Info Grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <div style={{ background: CL.blueLight, borderRadius: 10, padding: 20, border: `1px solid ${CL.blue}22` }}>
+            <div style={{ fontFamily: sansFont, fontSize: 12, fontWeight: 700, color: CL.blue, marginBottom: 10, letterSpacing: .5 }}>TANI KRİTERLERİ</div>
+            {p.criteria.map((c, i) => (
+              <div key={i} style={{ fontFamily: sansFont, fontSize: 13, color: CL.text, padding: "5px 0", borderBottom: i < p.criteria.length - 1 ? `1px solid ${CL.blue}15` : "none" }}>
+                <span style={{ color: CL.blue, marginRight: 8 }}>•</span>{c}
+              </div>
+            ))}
+          </div>
+          <div style={{ background: CL.greenLight, borderRadius: 10, padding: 20, border: `1px solid ${CL.green}22` }}>
+            <div style={{ fontFamily: sansFont, fontSize: 12, fontWeight: 700, color: CL.green, marginBottom: 10, letterSpacing: .5 }}>NE YAPMALI?</div>
+            <p style={{ fontFamily: sansFont, fontSize: 13, color: CL.text, lineHeight: 1.7, margin: 0 }}>{p.treatment}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (selCat) {
+    const cat = CATEGORIES.find(c => c.id === selCat);
+    const catPatterns = patterns.filter(p => p.cat === selCat);
+    return (
+      <div style={{ maxWidth: 1000, margin: "0 auto", padding: "24px 20px" }}>
+        <button onClick={() => setSelCat(null)}
+          style={{ fontFamily: sansFont, fontSize: 13, color: CL.sub, background: "none", border: "none", cursor: "pointer", marginBottom: 16 }}>← Kategoriler</button>
+        <h2 style={{ fontFamily: font, fontSize: 24, color: cat?.color || CL.text, margin: "0 0 20px" }}>{cat?.icon} {cat?.name}</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280, 1fr))", gap: 12 }}>
+          {catPatterns.map(p => (
+            <button key={p.id} onClick={() => setSelPattern(p)}
+              style={{
+                background: CL.card, border: `1px solid ${CL.border}`, borderRadius: 10,
+                padding: 0, cursor: "pointer", textAlign: "left", overflow: "hidden", transition: "all .2s",
+              }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = cat?.color || CL.blue}
+              onMouseLeave={e => e.currentTarget.style.borderColor = CL.border}>
+              <div style={{ padding: "12px 16px 8px" }}>
+                <div style={{ fontFamily: font, fontSize: 15, fontWeight: 700, color: CL.text }}>{p.name}</div>
+                <div style={{ fontFamily: sansFont, fontSize: 11, color: CL.sub, marginTop: 2 }}>{p.lead} · {"★".repeat(p.difficulty)}{"☆".repeat(3-p.difficulty)} · {p.patients.length} örnek</div>
+              </div>
+              <div style={{ padding: "0 12px 12px" }}>
+                <ECGCanvas pattern={p} patientIdx={0} height={100} showLabel={false} />
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ maxWidth: 1000, margin: "0 auto", padding: "32px 20px" }}>
+      <h2 style={{ fontFamily: font, fontSize: 26, color: CL.text, margin: "0 0 8px" }}>Öğren</h2>
+      <p style={{ fontFamily: sansFont, fontSize: 14, color: CL.sub, margin: "0 0 24px" }}>Kategori seç, her ritmi incele.</p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220, 1fr))", gap: 12 }}>
+        {CATEGORIES.map(cat => {
+          const count = patterns.filter(p => p.cat === cat.id).length;
+          return (
+            <button key={cat.id} onClick={() => setSelCat(cat.id)}
+              style={{
+                background: CL.card, border: `2px solid ${cat.color}20`, borderRadius: 10,
+                padding: 24, cursor: "pointer", textAlign: "left", transition: "all .2s",
+              }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = cat.color}
+              onMouseLeave={e => e.currentTarget.style.borderColor = cat.color + "20"}>
+              <div style={{ fontSize: 24, marginBottom: 8 }}>{cat.icon}</div>
+              <div style={{ fontFamily: font, fontSize: 16, fontWeight: 700, color: cat.color }}>{cat.name}</div>
+              <div style={{ fontFamily: sansFont, fontSize: 12, color: CL.sub, marginTop: 4 }}>{count} pattern</div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ── TEST ── */
+function Test() {
+  const [queue, setQueue] = useState([]);
+  const [idx, setIdx] = useState(0);
+  const [answer, setAnswer] = useState(null);
+  const [score, setScore] = useState({ c: 0, t: 0 });
+  const [started, setStarted] = useState(false);
+  const [testView, setTestView] = useState("single");
+  const [history, setHistory] = useState([]);
+
+  const startQuiz = useCallback((catId) => {
+    const pool = catId ? patterns.filter(p => p.cat === catId) : [...patterns];
+    const shuffled = pool.sort(() => Math.random() - .5).slice(0, 15);
+    setQueue(shuffled);
+    setIdx(0);
+    setAnswer(null);
+    setScore({ c: 0, t: 0 });
+    setStarted(true);
+    setHistory([]);
+  }, []);
+
+  // ALL hooks must be called before any return
+  const current = queue[idx] || null;
+  const patIdx = useMemo(() => current ? Math.floor(Math.random() * current.patients.length) : 0, [current, idx]);
+  const options = useMemo(() => {
+    if (!current) return [];
+    const others = patterns.filter(p => p.id !== current.id).sort(() => Math.random() - .5).slice(0, 3);
+    return [current, ...others].sort(() => Math.random() - .5).map(o => o.name);
+  }, [current]);
+  const isCorrect = answer && current ? answer === current.name : false;
+
+  const handleAnswer = (opt) => {
+    if (answer || !current) return;
+    setAnswer(opt);
+    const correct = opt === current.name;
+    setScore(s => ({ c: s.c + (correct ? 1 : 0), t: s.t + 1 }));
+    setHistory(h => [...h, { pattern: current.name, correct, userAnswer: opt }]);
+  };
+
+  // ── Not started: show category selection
+  if (!started) {
+    return (
+      <div style={{ maxWidth: 800, margin: "0 auto", padding: "32px 20px" }}>
+        <h2 style={{ fontFamily: font, fontSize: 26, color: CL.text, margin: "0 0 8px" }}>Test Et</h2>
+        <p style={{ fontFamily: sansFont, fontSize: 14, color: CL.sub, margin: "0 0 24px" }}>Quiz modunu seç. 15 rastgele soru.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180, 1fr))", gap: 10 }}>
+          <button onClick={() => startQuiz(null)}
+            style={{ background: CL.blue, color: "white", border: "none", borderRadius: 10, padding: 20, cursor: "pointer", textAlign: "left" }}>
+            <div style={{ fontFamily: font, fontSize: 16, fontWeight: 700 }}>Karışık</div>
+            <div style={{ fontSize: 12, opacity: .8, marginTop: 4 }}>Tüm kategoriler</div>
+          </button>
+          {CATEGORIES.map(cat => (
+            <button key={cat.id} onClick={() => startQuiz(cat.id)}
+              style={{ background: CL.card, border: `2px solid ${cat.color}30`, borderRadius: 10, padding: 20, cursor: "pointer", textAlign: "left", transition: "all .2s" }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = cat.color}
+              onMouseLeave={e => e.currentTarget.style.borderColor = cat.color + "30"}>
+              <div style={{ fontFamily: font, fontSize: 14, fontWeight: 700, color: cat.color }}>{cat.icon} {cat.name}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (idx >= queue.length) {
+    const pct = score.t > 0 ? Math.round((score.c / score.t) * 100) : 0;
+    const grade = pct >= 90 ? "Mükemmel!" : pct >= 70 ? "İyi" : pct >= 50 ? "Geliştirilmeli" : "Tekrar Et";
+    const gradeColor = pct >= 90 ? CL.green : pct >= 70 ? CL.blue : pct >= 50 ? CL.gold : CL.red;
+    const wrongs = history.filter(h => !h.correct);
+    return (
+      <div style={{ maxWidth: 600, margin: "0 auto", padding: "40px 20px" }}>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ fontFamily: font, fontSize: 56, fontWeight: 700, color: gradeColor }}>%{pct}</div>
+          <div style={{ fontFamily: sansFont, fontSize: 18, color: gradeColor, fontWeight: 600, marginBottom: 4 }}>{grade}</div>
+          <div style={{ fontFamily: sansFont, fontSize: 14, color: CL.sub }}>{score.c} / {score.t} doğru cevap</div>
+        </div>
+
+        {/* History breakdown */}
+        <div style={{ background: CL.card, border: `1px solid ${CL.border}`, borderRadius: 10, padding: 16, marginBottom: 20 }}>
+          <div style={{ fontFamily: sansFont, fontSize: 11, fontWeight: 700, color: CL.sub, letterSpacing: .5, marginBottom: 10 }}>SORU DETAYI</div>
+          {history.map((h, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: i < history.length - 1 ? `1px solid ${CL.border}` : "none" }}>
+              <span style={{ fontSize: 14, width: 20 }}>{h.correct ? "✓" : "✗"}</span>
+              <span style={{ fontFamily: sansFont, fontSize: 13, color: CL.text, flex: 1 }}>{h.pattern}</span>
+              {!h.correct && <span style={{ fontFamily: sansFont, fontSize: 11, color: CL.red }}>Senin cevabın: {h.userAnswer}</span>}
+            </div>
+          ))}
+        </div>
+
+        {/* Weak areas */}
+        {wrongs.length > 0 && (
+          <div style={{ background: CL.redLight, border: `1px solid ${CL.red}25`, borderRadius: 10, padding: 16, marginBottom: 20 }}>
+            <div style={{ fontFamily: sansFont, fontSize: 11, fontWeight: 700, color: CL.red, letterSpacing: .5, marginBottom: 8 }}>TEKRAR ÇALIŞ</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {wrongs.map((w, i) => (
+                <span key={i} style={{ background: "white", border: `1px solid ${CL.red}30`, borderRadius: 4, padding: "4px 10px", fontSize: 12, color: CL.red }}>{w.pattern}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <button onClick={() => { setStarted(false); setHistory([]); }}
+          style={{ width: "100%", fontFamily: sansFont, background: CL.blue, color: "white", border: "none", borderRadius: 8, padding: "14px", fontSize: 14, cursor: "pointer", fontWeight: 600 }}>
+          Tekrar Dene
+        </button>
+      </div>
+    );
+  }
+
+  // ── Quiz active
+  if (!current) return null;
+
+  return (
+    <div style={{ maxWidth: 800, margin: "0 auto", padding: "24px 20px" }}>
+      {/* Progress bar */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <div style={{ flex: 1, background: CL.border, borderRadius: 4, height: 6 }}>
+          <div style={{ width: `${((idx + 1) / queue.length) * 100}%`, background: CL.blue, borderRadius: 4, height: 6, transition: "width .3s" }} />
+        </div>
+        <span style={{ fontFamily: sansFont, fontSize: 12, color: CL.sub }}>{idx + 1}/{queue.length}</span>
+        <span style={{ fontFamily: sansFont, fontSize: 12, color: CL.green, fontWeight: 600 }}>{score.c}✓</span>
+      </div>
+
+      {/* Clinical Scenario */}
+      {current.scenario && (
+        <div style={{ background: CL.goldLight, border: `1px solid ${CL.gold}30`, borderRadius: 10, padding: "14px 18px", marginBottom: 12 }}>
+          <div style={{ fontFamily: sansFont, fontSize: 10, fontWeight: 700, color: CL.gold, letterSpacing: 1, marginBottom: 6 }}>KLİNİK SENARYO</div>
+          <div style={{ fontFamily: sansFont, fontSize: 13.5, color: CL.text, lineHeight: 1.6 }}>{current.scenario}</div>
+        </div>
+      )}
+
+      {/* ECG */}
+      <div style={{ background: CL.card, border: `1px solid ${CL.border}`, borderRadius: 10, padding: 16, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <div style={{ fontFamily: sansFont, fontSize: 11, color: CL.sub }}>
+            {current.lead} · {"★".repeat(current.difficulty)}
+          </div>
+          <div style={{ display: "flex", background: CL.blueLight, borderRadius: 6, padding: 2 }}>
+            <button onClick={() => setTestView("single")}
+              style={{
+                fontFamily: sansFont, fontSize: 10, fontWeight: 600, padding: "4px 10px", borderRadius: 4, border: "none", cursor: "pointer",
+                background: testView === "single" ? CL.blue : "transparent",
+                color: testView === "single" ? "white" : CL.blue,
+              }}>Strip</button>
+            <button onClick={() => setTestView("12lead")}
+              style={{
+                fontFamily: sansFont, fontSize: 10, fontWeight: 600, padding: "4px 10px", borderRadius: 4, border: "none", cursor: "pointer",
+                background: testView === "12lead" ? CL.blue : "transparent",
+                color: testView === "12lead" ? "white" : CL.blue,
+              }}>12D</button>
+          </div>
+        </div>
+        {testView === "single"
+          ? <ECGCanvas pattern={current} patientIdx={patIdx} height={200} />
+          : <ECG12LeadCanvas pattern={current} patientIdx={patIdx} />
+        }
+      </div>
+
+      {/* Options */}
+      <div style={{ fontFamily: sansFont, fontSize: 12, color: CL.sub, marginBottom: 8, fontWeight: 600, letterSpacing: .5 }}>TANIN NEDİR?</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+        {options.map(opt => {
+          let bg = CL.card, border = CL.border, textColor = CL.text;
+          if (answer) {
+            if (opt === current.name) { bg = CL.greenLight; border = CL.green; textColor = CL.green; }
+            else if (opt === answer && !isCorrect) { bg = CL.redLight; border = CL.red; textColor = CL.red; }
+            else { bg = "#F5F5F5"; textColor = "#AAA"; }
+          }
+          return (
+            <button key={opt} onClick={() => handleAnswer(opt)} disabled={!!answer}
+              style={{
+                fontFamily: sansFont, fontSize: 13, fontWeight: 500, color: textColor,
+                background: bg, border: `1.5px solid ${border}`, borderRadius: 8,
+                padding: "14px 16px", cursor: answer ? "default" : "pointer",
+                textAlign: "left", transition: "all .2s",
+              }}>{opt}</button>
+          );
+        })}
+      </div>
+
+      {/* Feedback */}
+      {answer && (
+        <div style={{ animation: "fadeIn .3s ease" }}>
+          <div style={{
+            background: isCorrect ? CL.greenLight : CL.redLight,
+            border: `1px solid ${isCorrect ? CL.green : CL.red}`,
+            borderRadius: 10, padding: 20, marginBottom: 12,
+          }}>
+            <div style={{ fontFamily: sansFont, fontSize: 15, fontWeight: 700, color: isCorrect ? CL.green : CL.red, marginBottom: 10 }}>
+              {isCorrect ? "✓ Doğru" : "✗ Yanlış"} — {current.name}
+            </div>
+            <p style={{ fontFamily: sansFont, fontSize: 13, color: CL.text, lineHeight: 1.6, margin: "0 0 12px" }}>{current.desc}</p>
+            {/* Criteria tags */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+              {current.criteria.map((c, i) => (
+                <span key={i} style={{
+                  background: CL.blueLight, border: `1px solid ${CL.blue}30`, borderRadius: 4,
+                  padding: "4px 10px", fontSize: 11, fontFamily: sansFont, color: CL.blue, fontWeight: 500,
+                }}>{c}</span>
+              ))}
+            </div>
+            {/* Treatment */}
+            <div style={{ background: "white", borderRadius: 8, padding: 14, border: `1px solid ${CL.green}25` }}>
+              <div style={{ fontFamily: sansFont, fontSize: 11, fontWeight: 700, color: CL.green, letterSpacing: .5, marginBottom: 6 }}>NE YAPMALI?</div>
+              <p style={{ fontFamily: sansFont, fontSize: 13, color: CL.text, lineHeight: 1.6, margin: 0 }}>{current.treatment}</p>
+            </div>
+          </div>
+          <button onClick={() => { setIdx(idx + 1); setAnswer(null); setTestView("single"); }}
+            style={{
+              width: "100%", fontFamily: sansFont, background: CL.blue, color: "white",
+              border: "none", borderRadius: 8, padding: 14, fontSize: 14, fontWeight: 600, cursor: "pointer",
+            }}>
+            {idx < queue.length - 1 ? "Sonraki →" : "Sonuçları Gör"}
+          </button>
+        </div>
+      )}
+      <style>{`@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}`}</style>
+    </div>
+  );
+}
+
+/* ── APP ── */
+function App() {
+  const [page, setPage] = useState("menu");
+  return (
+    <div style={{ minHeight: "100vh", background: CL.bg, fontFamily: sansFont }}>
+      <Header onNav={setPage} current={page} />
+      {page === "menu" && <Home onNav={setPage} />}
+      {page === "learn" && <Learn onNav={setPage} />}
+      {page === "test" && <Test />}
+    </div>
+  );
+}
+
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
