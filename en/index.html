@@ -1014,6 +1014,10 @@ function Home({ onNav }) {
       <div style={{ textAlign: "center", marginBottom: 48 }}>
         <h1 style={{ fontFamily: font, fontSize: 32, color: CL.text, margin: "0 0 8px", fontWeight: 700 }}>Emergency ECG Practice</h1>
         <p style={{ fontFamily: sansFont, fontSize: 15, color: CL.sub, margin: 0 }}>35 ECG patterns · 280+ patient variations · Evidence-based</p>
+        <div style={{ display: "inline-flex", marginTop: 18, background: CL.card, border: `1px solid ${CL.border}`, borderRadius: 999, padding: 3, gap: 2 }}>
+          <a href="../" style={{ fontFamily: sansFont, fontSize: 13, fontWeight: 600, borderRadius: 999, padding: "7px 18px", textDecoration: "none", color: CL.sub }}>Türkçe</a>
+          <span style={{ fontFamily: sansFont, fontSize: 13, fontWeight: 600, borderRadius: 999, padding: "7px 18px", textDecoration: "none", background: CL.blue, color: "white" }}>English</span>
+        </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 40 }}>
         {[

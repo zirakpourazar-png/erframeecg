@@ -983,6 +983,8 @@ function Header({ onNav, current }) {
                 transition: "all .2s",
               }}>{label}</button>
           ))}
+          <a href="en/" title="English"
+            style={{ fontFamily: sansFont, fontSize: 11, fontWeight: 600, color: CL.sub, border: `1px solid ${CL.border}`, borderRadius: 6, padding: "5px 7px", textDecoration: "none", marginLeft: 2, alignSelf: "center" }}>EN</a>
         </div>
       </div>
     </div>
@@ -1012,6 +1014,10 @@ function Home({ onNav }) {
       <div style={{ textAlign: "center", marginBottom: 48 }}>
         <h1 style={{ fontFamily: font, fontSize: 32, color: CL.text, margin: "0 0 8px", fontWeight: 700 }}>Acil EKG Pratiği</h1>
         <p style={{ fontFamily: sansFont, fontSize: 15, color: CL.sub, margin: 0 }}>35 EKG pattern · 280+ hasta varyasyonu · Kanıta dayalı</p>
+        <div style={{ display: "inline-flex", marginTop: 18, background: CL.card, border: `1px solid ${CL.border}`, borderRadius: 999, padding: 3, gap: 2 }}>
+          <span style={{ fontFamily: sansFont, fontSize: 13, fontWeight: 600, borderRadius: 999, padding: "7px 18px", textDecoration: "none", background: CL.blue, color: "white" }}>Türkçe</span>
+          <a href="en/" style={{ fontFamily: sansFont, fontSize: 13, fontWeight: 600, borderRadius: 999, padding: "7px 18px", textDecoration: "none", color: CL.sub }}>English</a>
+        </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 40 }}>
         {[
@@ -1151,7 +1157,7 @@ function Learn({ onNav }) {
         <button onClick={() => setSelCat(null)}
           style={{ fontFamily: sansFont, fontSize: 13, color: CL.sub, background: "none", border: "none", cursor: "pointer", marginBottom: 16 }}>← Kategoriler</button>
         <h2 style={{ fontFamily: font, fontSize: 24, color: cat?.color || CL.text, margin: "0 0 20px" }}>{cat?.icon} {cat?.name}</h2>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280, 1fr))", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
           {catPatterns.map(p => (
             <button key={p.id} onClick={() => setSelPattern(p)}
               style={{
@@ -1178,7 +1184,7 @@ function Learn({ onNav }) {
     <div style={{ maxWidth: 1000, margin: "0 auto", padding: "32px 20px" }}>
       <h2 style={{ fontFamily: font, fontSize: 26, color: CL.text, margin: "0 0 8px" }}>Öğren</h2>
       <p style={{ fontFamily: sansFont, fontSize: 14, color: CL.sub, margin: "0 0 24px" }}>Kategori seç, her ritmi incele.</p>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220, 1fr))", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
         {CATEGORIES.map(cat => {
           const count = patterns.filter(p => p.cat === cat.id).length;
           return (
@@ -1245,7 +1251,7 @@ function Test() {
       <div style={{ maxWidth: 800, margin: "0 auto", padding: "32px 20px" }}>
         <h2 style={{ fontFamily: font, fontSize: 26, color: CL.text, margin: "0 0 8px" }}>Test Et</h2>
         <p style={{ fontFamily: sansFont, fontSize: 14, color: CL.sub, margin: "0 0 24px" }}>Quiz modunu seç. 15 rastgele soru.</p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180, 1fr))", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10 }}>
           <button onClick={() => startQuiz(null)}
             style={{ background: CL.blue, color: "white", border: "none", borderRadius: 10, padding: 20, cursor: "pointer", textAlign: "left" }}>
             <div style={{ fontFamily: font, fontSize: 16, fontWeight: 700 }}>Karışık</div>
